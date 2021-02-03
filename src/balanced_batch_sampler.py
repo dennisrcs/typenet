@@ -4,6 +4,9 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import BatchSampler
 
+import cProfile
+import pstats
+
 
 class BalancedBatchSampler(BatchSampler):
     """
@@ -14,8 +17,14 @@ class BalancedBatchSampler(BatchSampler):
     def __init__(self, dataset, n_classes, n_samples):
         loader = DataLoader(dataset)
         self.labels_list = []
+        profile = cProfile.Profile()
+        profile.enable()
         for _, label in loader:
             self.labels_list.append(label)
+
+        profile.disable()
+        ps = pstats.Stats(profile)
+        ps.print_stats()
         self.labels = torch.LongTensor(self.labels_list)
         self.labels_set = list(set(self.labels.numpy()))
         self.label_to_indices = {label: np.where(self.labels.numpy() == label)[0]
