@@ -7,24 +7,29 @@ from torch.utils.data.sampler import BatchSampler
 import cProfile
 import pstats
 
-
 class BalancedBatchSampler(BatchSampler):
     """
     BatchSampler - from a MNIST-like dataset, samples n_classes and within these classes samples n_samples.
     Returns batches of size n_classes * n_samples
     """
 
-    def __init__(self, dataset, n_classes, n_samples):
+    def __init__(self, dataset, n_classes, n_samples, num_participants, num_sequences):
+
+        # genuine numbers
+        genuine_per_participant = int((num_sequences * (num_sequences - 1)) / 2)
+        genuine_total = genuine_per_participant * num_participants
+        
+        # impostor numbers
+        impostor_per_participant = num_sequences * num_sequences * (num_participants - 1)
+        impostor_total = impostor_per_participant * num_participants
+
         loader = DataLoader(dataset)
         self.labels_list = []
-        profile = cProfile.Profile()
-        profile.enable()
         for _, label in loader:
             self.labels_list.append(label)
+        
+        self.labels_list = [torch.ones([1], dtype=torch.int32)] * genuine_total + [torch.zeros([1], dtype=torch.int32)] * impostor_total
 
-        profile.disable()
-        ps = pstats.Stats(profile)
-        ps.print_stats()
         self.labels = torch.LongTensor(self.labels_list)
         self.labels_set = list(set(self.labels.numpy()))
         self.label_to_indices = {label: np.where(self.labels.numpy() == label)[0]

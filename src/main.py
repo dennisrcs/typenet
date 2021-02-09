@@ -9,18 +9,20 @@ from torch import nn
 from torch import optim
 import numpy as np
 from siamesenn import SiameseNet
+from random import sample 
 
 EXTRACT_FEATURES = False
 IS_TRAINING = True
 SEQUENCE_SIZE = 50
 SIZE_TRAINING = 68000
-SIZE_VAL = 1000
-SIZE_TEST = 1000
+SIZE_VAL = 100
+SIZE_TEST = 100
 ENROLLMENT_SEQUENCES = 15
+BATCHS_PER_ITER = 150
 GALLERY_SIZE = 10
 DATA_ROOT_DIR = 'data'
 
-save_states = False
+save_states = True
 batch_size = 512
 lr = 0.01
 num_epochs = 200
@@ -31,13 +33,14 @@ n_classes = 2
 n_samples = 256
 
 PARTS_TRAINING = np.arange(0, SIZE_TRAINING)
-PARTS_VAL = np.arange(SIZE_TRAINING, SIZE_TRAINING + SIZE_VAL)
-PARTS_TEST = np.arange(SIZE_TRAINING + SIZE_VAL, SIZE_TRAINING + SIZE_VAL + SIZE_TEST)
+PARTS_VAL = np.arange(SIZE_TRAINING + 5000, SIZE_TRAINING + SIZE_VAL + 5000)
+PARTS_TEST = np.arange(SIZE_TRAINING + SIZE_VAL + 1000, SIZE_TRAINING + SIZE_VAL + SIZE_TEST + 1000)
 
 def train(model, device, train_loader, epoch, optimizer):
     model.train()
     contrastive_loss = ContrastiveLoss(margin=1.5)
 
+    counter = 0
     for batch_idx, (data, target) in enumerate(train_loader):
         optimizer.zero_grad()
 
@@ -55,7 +58,7 @@ def train(model, device, train_loader, epoch, optimizer):
             epoch, batch_idx*batch_size, len(train_loader.dataset), 100. * batch_idx*batch_size / len(train_loader.dataset),
             loss.item()))
 
-def validation(model, device, loader):
+def validation(model, device, loader, epoch):
     model.eval()
 
     contrastive_loss = ContrastiveLoss(margin=1.5)
@@ -65,15 +68,21 @@ def validation(model, device, loader):
         all_labels = 0
         loss = 0
         
+        counter = 0
         for batch_idx, (data, target) in enumerate(loader):
+            if counter == BATCHS_PER_ITER:
+                break
+
             output1 = model(data[:,0])
             output2 = model(data[:,1])
 
             target = target.type(torch.LongTensor).to(device)
 
             loss = loss + contrastive_loss(output1, output2, target)
+
+            counter = counter + 1
         
-        print('Validation Loss: {:.6f}'.format(loss))
+        print('Validation Loss (epoch={:d}): {:.6f}'.format(epoch, loss))
     
 def test(model, device, loader, epoch):
     model.eval()
@@ -97,7 +106,8 @@ def test(model, device, loader, epoch):
         print('EER: {:.3f}'.format(final_score))
 
 def main():
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
     if EXTRACT_FEATURES:
         extractor = FeatureExtractor(DATA_ROOT_DIR, SEQUENCE_SIZE)
@@ -105,17 +115,14 @@ def main():
 
     # training dataset
     training_dataset = TypeNetDataset(DATA_ROOT_DIR, ENROLLMENT_SEQUENCES, PARTS_TRAINING)
-    training_batch_sampler = BalancedBatchSampler(training_dataset, n_classes, n_samples)
-    train_loader = torch.utils.data.DataLoader(training_dataset, batch_sampler=training_batch_sampler)
-   
+    
     # # validation dataset
     validation_dataset = TypeNetDataset(DATA_ROOT_DIR, ENROLLMENT_SEQUENCES, PARTS_VAL)
-    val_batch_sampler = BalancedBatchSampler(validation_dataset, n_classes, n_samples)
-    val_loader = torch.utils.data.DataLoader(validation_dataset, batch_sampler=val_batch_sampler)
+    val_loader = torch.utils.data.DataLoader(validation_dataset, batch_size=batch_size, shuffle=True)
 
     # test dataset
-    test_dataset = TypeNetDatasetTest(DATA_ROOT_DIR, PARTS_TEST)
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=1, shuffle=False)
+    # test_dataset = TypeNetDatasetTest(DATA_ROOT_DIR, PARTS_TEST)
+    # test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=1, shuffle=False)
 
     # initializing model
     model = SiameseNet(input_size, hidden_size, num_layers).to(device)
@@ -123,18 +130,23 @@ def main():
     # adam optimizer
     optimizer = optim.Adam(model.parameters(), lr=lr)
     
-    # first validation loss
-    validation(model, device, val_loader)
-
     # training
     for epoch in range(num_epochs):
-        train(model, device, train_loader, epoch, optimizer)
-        validation(model, device, val_loader)
-        
         if save_states:
-            torch.save(model.state_dict(), 'siamese_typenet_{:03}.pt'.format(epoch))
-        
-    test(model, device, test_loader, str(epoch))
+            torch.save(model.state_dict(), 'states/siamese_typenet_{:03}.pt'.format(epoch))
+
+        if epoch % 5 == 0:
+            validation(model, device, val_loader, epoch)
+
+        indices = sample(range(0, len(training_dataset)), batch_size * BATCHS_PER_ITER)
+        training_subset = torch.utils.data.Subset(training_dataset, indices)
+        train_loader = torch.utils.data.DataLoader(training_subset, batch_size=batch_size, shuffle=True)
+        train(model, device, train_loader, epoch, optimizer)
+
+    if save_states:
+        torch.save(model.state_dict(), 'states/siamese_typenet_final.pt')
+
+    # test(model, device, test_loader, str(epoch))
          
 if __name__ == '__main__':
     main()

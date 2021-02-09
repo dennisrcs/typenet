@@ -13,7 +13,7 @@ class SiameseNet(nn.Module):
       self.bn1 = nn.BatchNorm1d(input_size)
 
    def forward(self, data):
-      device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+      device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
       x = data.to(device)
       
       x = x.permute(0, 2, 1)
